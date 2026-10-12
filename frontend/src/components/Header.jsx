@@ -4,6 +4,9 @@ import { colors, typography, shadows } from '../styles/theme';
 import { PRESETS } from '../api/telemetryApi';
 
 export default function Header({
+  currentPage,
+  onNavigatePage,
+  hasResults,
   circuitId,
   processType,
   apiHealth,
@@ -11,11 +14,14 @@ export default function Header({
   onSelectPreset,
   onToggleProcessType,
   onOpenRawJson,
+  currentUser,
+  onLogout,
 }) {
   const isHealthy = apiHealth?.status === 'online';
 
   return (
     <View style={styles.headerContainer}>
+      {/* Top Row: Brand, Main Nav Tabs & Inspector */}
       <View style={styles.topRow}>
         <View style={styles.brandContainer}>
           <View style={styles.logoBadge}>
@@ -38,6 +44,45 @@ export default function Header({
           </View>
         </View>
 
+        {/* Primary Page Navigation Tabs */}
+        <View style={styles.navTabs}>
+          <TouchableOpacity
+            style={[styles.navTab, currentPage === 'ingest' && styles.navTabActive]}
+            onPress={() => onNavigatePage('ingest')}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.navTabText, currentPage === 'ingest' && styles.navTabTextActive]}>
+              📡 INGEST TELEMETRY
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.navTab, currentPage === 'dashboard' && styles.navTabActive]}
+            onPress={() => onNavigatePage('dashboard')}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.navTabText, currentPage === 'dashboard' && styles.navTabTextActive]}>
+              📊 OPTIMIZATION DASHBOARD
+            </Text>
+            {hasResults && (
+              <View style={styles.resultsBadge}>
+                <Text style={styles.resultsBadgeText}>LIVE</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.navTab, currentPage === 'history' && styles.navTabActive]}
+            onPress={() => onNavigatePage('history')}
+            activeOpacity={0.8}
+          >
+            <Text style={[styles.navTabText, currentPage === 'history' && styles.navTabTextActive]}>
+              📜 HISTORICAL DATA
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Inspector Button & Operator Profile */}
         <View style={styles.actionButtons}>
           <TouchableOpacity
             style={styles.inspectButton}
@@ -46,10 +91,34 @@ export default function Header({
           >
             <Text style={styles.inspectButtonText}>{'< / >'} JSON Inspector</Text>
           </TouchableOpacity>
+
+          {currentUser && (
+            <View style={styles.userBadge}>
+              <Text style={styles.userAvatar}>{currentUser.avatar || '👤'}</Text>
+              <View style={styles.userInfo}>
+                <View style={styles.userNameRow}>
+                  <Text style={styles.userName}>{currentUser.displayName || currentUser.username}</Text>
+                  <View style={[styles.userRoleTag, { borderColor: currentUser.badgeColor || colors.goldPrimary }]}>
+                    <Text style={[styles.userRoleText, { color: currentUser.badgeColor || colors.goldBright }]}>
+                      {currentUser.role}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.userShift}>{currentUser.activeShift || currentUser.shift || 'Shift A (Day)'}</Text>
+              </View>
+              <TouchableOpacity
+                style={styles.logoutButton}
+                onPress={onLogout}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.logoutButtonText}>🔒 Lock</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       </View>
 
-      {/* Preset and Circuit Selector Bar */}
+      {/* Secondary Bar: Contextual Controls */}
       <View style={styles.selectorBar}>
         <View style={styles.selectorGroup}>
           <Text style={styles.selectorLabel}>PROCESS TYPE:</Text>
@@ -76,6 +145,7 @@ export default function Header({
           </View>
         </View>
 
+        {/* Presets (primarily visible/relevant during configuration) */}
         <View style={styles.presetGroup}>
           <Text style={styles.selectorLabel}>METALLURGY PRESETS:</Text>
           <View style={styles.presetButtons}>
@@ -115,7 +185,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     flexWrap: 'wrap',
-    gap: 12,
+    gap: 16,
   },
   brandContainer: {
     flexDirection: 'row',
@@ -197,6 +267,52 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 2,
     fontFamily: typography.fontFamilyBody,
+  },
+  navTabs: {
+    flexDirection: 'row',
+    backgroundColor: '#090E1A',
+    borderRadius: 8,
+    padding: 3,
+    borderWidth: 1,
+    borderColor: colors.borderMedium,
+    gap: 4,
+  },
+  navTab: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 6,
+  },
+  navTabActive: {
+    backgroundColor: '#1E293B',
+    borderWidth: 1,
+    borderColor: colors.cyanPrimary,
+    ...shadows.glowCyan,
+  },
+  navTabText: {
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: '700',
+    fontFamily: typography.fontFamilyMono,
+    letterSpacing: 0.5,
+  },
+  navTabTextActive: {
+    color: colors.cyanBright,
+    fontWeight: '800',
+  },
+  resultsBadge: {
+    backgroundColor: colors.emeraldPrimary,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    borderRadius: 4,
+  },
+  resultsBadgeText: {
+    color: '#000',
+    fontSize: 9,
+    fontWeight: '900',
+    fontFamily: typography.fontFamilyMono,
   },
   actionButtons: {
     flexDirection: 'row',
@@ -307,5 +423,65 @@ const styles = StyleSheet.create({
   presetButtonTextActive: {
     color: colors.goldBright,
     fontWeight: '700',
+  },
+  userBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#090E1A',
+    borderWidth: 1,
+    borderColor: colors.borderMedium,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    gap: 8,
+  },
+  userAvatar: {
+    fontSize: 16,
+  },
+  userInfo: {
+    gap: 2,
+  },
+  userNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  userName: {
+    color: colors.textPrimary,
+    fontSize: 11,
+    fontWeight: '700',
+    fontFamily: typography.fontFamilyHeading,
+  },
+  userRoleTag: {
+    borderWidth: 1,
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    backgroundColor: '#0F172A',
+  },
+  userRoleText: {
+    fontSize: 9,
+    fontWeight: '700',
+    fontFamily: typography.fontFamilyMono,
+  },
+  userShift: {
+    color: colors.textMuted,
+    fontSize: 9.5,
+    fontFamily: typography.fontFamilyMono,
+  },
+  logoutButton: {
+    backgroundColor: 'rgba(244, 63, 94, 0.12)',
+    borderWidth: 1,
+    borderColor: colors.rosePrimary,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+    marginLeft: 4,
+  },
+  logoutButtonText: {
+    color: colors.roseBright,
+    fontSize: 10,
+    fontWeight: '700',
+    fontFamily: typography.fontFamilyMono,
   },
 });

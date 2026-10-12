@@ -13,12 +13,27 @@ import { colors, typography, shadows } from './styles/theme';
 import Header from './components/Header';
 import TankStageVisualizer from './components/TankStageVisualizer';
 import TelemetryForm from './components/TelemetryForm';
-import OptimizationResults from './components/OptimizationResults';
+import DashboardPage from './components/DashboardPage';
 import RawJsonModal from './components/RawJsonModal';
+import LoginScreen from './components/LoginScreen';
+import HistoricalDataPage from './components/HistoricalDataPage';
 import { PRESETS, submitTelemetry, checkHealth } from './api/telemetryApi';
 
 export default function App() {
   const initialPreset = PRESETS[0];
+
+  // Operator Authentication State
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem('cip_logged_user');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  // Primary Page State: 'ingest' | 'dashboard'
+  const [currentPage, setCurrentPage] = useState('ingest');
 
   const [circuitId, setCircuitId] = useState(initialPreset.circuit_id);
   const [processType, setProcessType] = useState(initialPreset.process_type);
@@ -35,7 +50,7 @@ export default function App() {
   const [modalVisible, setModalVisible] = useState(false);
   const [history, setHistory] = useState([]);
 
-  // Check backend health on initial mount and periodically
+  // Check backend health periodically
   useEffect(() => {
     let isMounted = true;
     async function testApi() {
@@ -159,9 +174,12 @@ export default function App() {
           goldOz: response.projected_production_yield?.estimated_daily_gold_production_troy_oz,
           payload,
           result: response,
+          stages: JSON.parse(JSON.stringify(tankStages)),
         },
         ...prev.slice(0, 9),
       ]);
+      // Transition automatically to the Dashboard page upon success
+      setCurrentPage('dashboard');
     } catch (err) {
       setErrorMessage(`Telemetry ingestion failed: ${err.message}`);
     } finally {
@@ -180,12 +198,59 @@ export default function App() {
   const recDensities =
     optimizationResult?.carbon_adsorption_recommendations?.recommended_tank_carbon_densities_gl;
 
+  const handleLoginSuccess = (user) => {
+    setCurrentUser(user);
+  };
+
+  const handleLogout = () => {
+    try {
+      localStorage.removeItem('cip_logged_user');
+    } catch (e) {
+      // ignore
+    }
+    setCurrentUser(null);
+  };
+
+  const handleLoadHistoricalIntoDashboard = (detail) => {
+    setOptimizationResult(detail);
+    if (detail.circuit_id) setCircuitId(detail.circuit_id);
+    if (detail.process_type) setProcessType(detail.process_type);
+    if (detail.stages) setTankStages(detail.stages);
+    if (detail.global_metrics) setGlobalMetrics({ ...detail.global_metrics });
+    setCurrentPage('dashboard');
+  };
+
+  const handleLoadHistoricalIntoIngest = (item) => {
+    if (item.circuit_id) setCircuitId(item.circuit_id);
+    if (item.circuit_id.includes('CIL')) setProcessType('CIL');
+    else setProcessType('CIP');
+    if (item.slurry_flow_rate_m3_h !== undefined) {
+      setGlobalMetrics({
+        slurry_flow_rate_m3_h: item.slurry_flow_rate_m3_h,
+        slurry_density_pct: item.slurry_density_pct,
+        slurry_ph: item.slurry_ph,
+        carbon_advance_rate_tons_h: item.carbon_advance_rate_tons_h,
+      });
+    }
+    if (item.stages && item.stages.length) {
+      setTankStages(JSON.parse(JSON.stringify(item.stages)));
+    }
+    setCurrentPage('ingest');
+  };
+
+  if (!currentUser) {
+    return <LoginScreen onLoginSuccess={handleLoginSuccess} />;
+  }
+
   return (
     <SafeAreaView style={styles.appContainer}>
       <StatusBar barStyle="light-content" backgroundColor="#080C16" />
 
       {/* Top Console Navigation & Header */}
       <Header
+        currentPage={currentPage}
+        onNavigatePage={setCurrentPage}
+        hasResults={Boolean(optimizationResult)}
         circuitId={circuitId}
         processType={processType}
         apiHealth={apiHealth}
@@ -193,6 +258,8 @@ export default function App() {
         onSelectPreset={handleSelectPreset}
         onToggleProcessType={handleToggleProcessType}
         onOpenRawJson={() => setModalVisible(true)}
+        currentUser={currentUser}
+        onLogout={handleLogout}
       />
 
       {/* Main Body Content */}
@@ -200,6 +267,7 @@ export default function App() {
         style={styles.mainScroll}
         contentContainerStyle={styles.mainScrollContent}
         showsVerticalScrollIndicator={true}
+        persistentScrollbar={true}
       >
         {/* Error notification banner */}
         {errorMessage && (
@@ -212,31 +280,7 @@ export default function App() {
           </View>
         )}
 
-        {/* Countercurrent Contact Train Visualizer */}
-        <TankStageVisualizer
-          stages={tankStages}
-          recommendedDensities={recDensities}
-          selectedStageIndex={selectedStageIndex}
-          onSelectStage={setSelectedStageIndex}
-          processType={processType}
-        />
-
-        {/* Form Input Section */}
-        <TelemetryForm
-          formData={formData}
-          onChangeField={(f, v) => f === 'circuit_id' && setCircuitId(v)}
-          onChangeGlobalMetric={handleChangeGlobalMetric}
-          onChangeMineralogyAssay={handleChangeMineralogyAssay}
-          onChangeTankStage={handleChangeTankStage}
-          onAddTankStage={handleAddTankStage}
-          onRemoveTankStage={handleRemoveTankStage}
-          onSubmit={handleSubmitTelemetry}
-          isLoading={isLoading}
-          selectedStageIndex={selectedStageIndex}
-          onSelectStage={setSelectedStageIndex}
-        />
-
-        {/* Optimization Dashboard Output */}
+        {/* Loading Overlay */}
         {isLoading && (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={colors.cyanBright} />
@@ -245,31 +289,79 @@ export default function App() {
           </View>
         )}
 
-        {optimizationResult && !isLoading && (
-          <OptimizationResults result={optimizationResult} currentStages={tankStages} />
+        {/* PAGE 1: INGEST TELEMETRY */}
+        {currentPage === 'ingest' && (
+          <View style={styles.pageSection}>
+            {/* Quick jump to dashboard banner if results exist */}
+            {optimizationResult && !isLoading && (
+              <View style={styles.resultNoticeBanner}>
+                <View style={styles.resultNoticeLeft}>
+                  <Text style={styles.resultNoticeDot}>●</Text>
+                  <Text style={styles.resultNoticeTitle}>
+                    ACTIVE OPTIMIZATION RESULT AVAILABLE FOR {optimizationResult.circuit_id}
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.resultNoticeBtn}
+                  onPress={() => setCurrentPage('dashboard')}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.resultNoticeBtnText}>VIEW FULL DASHBOARD ➔</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* Countercurrent Contact Train Visualizer */}
+            <TankStageVisualizer
+              stages={tankStages}
+              recommendedDensities={recDensities}
+              selectedStageIndex={selectedStageIndex}
+              onSelectStage={setSelectedStageIndex}
+              processType={processType}
+            />
+
+            {/* Form Input Section */}
+            <TelemetryForm
+              formData={formData}
+              onChangeField={(f, v) => f === 'circuit_id' && setCircuitId(v)}
+              onChangeGlobalMetric={handleChangeGlobalMetric}
+              onChangeMineralogyAssay={handleChangeMineralogyAssay}
+              onChangeTankStage={handleChangeTankStage}
+              onAddTankStage={handleAddTankStage}
+              onRemoveTankStage={handleRemoveTankStage}
+              onSubmit={handleSubmitTelemetry}
+              isLoading={isLoading}
+              selectedStageIndex={selectedStageIndex}
+              onSelectStage={setSelectedStageIndex}
+            />
+          </View>
         )}
 
-        {/* Audit Log / History */}
-        {history.length > 0 && (
-          <View style={styles.historyCard}>
-            <Text style={styles.historyTitle}>TELEMETRY TRANSMISSION SESSION AUDIT</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.historyRow}>
-              {history.map((item, i) => (
-                <TouchableOpacity
-                  key={item.id + '-' + i}
-                  style={styles.historyPill}
-                  onPress={() => {
-                    setOptimizationResult(item.result);
-                  }}
-                >
-                  <Text style={styles.historyTime}>{item.time}</Text>
-                  <Text style={styles.historyCircuit}>{item.circuit}</Text>
-                  <Text style={styles.historyRecovery}>{item.recovery?.toFixed(1)}% Rec</Text>
-                  <Text style={styles.historyGold}>{item.goldOz} oz/d</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
+        {/* PAGE 2: OPTIMIZATION DASHBOARD */}
+        {currentPage === 'dashboard' && (
+          <DashboardPage
+            result={optimizationResult}
+            currentStages={tankStages}
+            processType={processType}
+            selectedStageIndex={selectedStageIndex}
+            onSelectStage={setSelectedStageIndex}
+            onNavigateToIngest={() => setCurrentPage('ingest')}
+            onOpenRawJson={() => setModalVisible(true)}
+            history={history}
+            onSelectHistoryItem={(item) => {
+              setOptimizationResult(item.result);
+              if (item.stages) setTankStages(item.stages);
+            }}
+          />
+        )}
+
+        {/* PAGE 3: HISTORICAL DATA */}
+        {currentPage === 'history' && (
+          <HistoricalDataPage
+            onLoadIntoDashboard={handleLoadHistoricalIntoDashboard}
+            onLoadIntoIngest={handleLoadHistoricalIntoIngest}
+            onOpenRawJson={() => setModalVisible(true)}
+          />
         )}
       </ScrollView>
 
@@ -299,6 +391,49 @@ const styles = StyleSheet.create({
     maxWidth: 1400,
     width: '100%',
     alignSelf: 'center',
+  },
+  pageSection: {
+    gap: 12,
+  },
+  resultNoticeBanner: {
+    backgroundColor: '#0A172A',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.4)',
+    borderRadius: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  resultNoticeLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  resultNoticeDot: {
+    color: colors.emeraldBright,
+    fontSize: 14,
+  },
+  resultNoticeTitle: {
+    color: colors.textPrimary,
+    fontSize: 12,
+    fontWeight: '700',
+    fontFamily: typography.fontFamilyMono,
+  },
+  resultNoticeBtn: {
+    backgroundColor: colors.emeraldPrimary,
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 4,
+  },
+  resultNoticeBtnText: {
+    color: '#000',
+    fontSize: 11,
+    fontWeight: '800',
+    fontFamily: typography.fontFamilyMono,
   },
   errorBanner: {
     backgroundColor: 'rgba(239, 68, 68, 0.15)',
@@ -353,56 +488,5 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     fontSize: 11,
     fontFamily: typography.fontFamilyBody,
-  },
-  historyCard: {
-    backgroundColor: colors.bgCard,
-    borderWidth: 1,
-    borderColor: colors.borderSubtle,
-    borderRadius: 10,
-    padding: 14,
-    marginTop: 20,
-  },
-  historyTitle: {
-    color: colors.textMuted,
-    fontSize: 11,
-    fontWeight: '700',
-    fontFamily: typography.fontFamilyMono,
-    marginBottom: 10,
-    letterSpacing: 0.5,
-  },
-  historyRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  historyPill: {
-    backgroundColor: '#0B1120',
-    borderWidth: 1,
-    borderColor: colors.borderMedium,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 6,
-    gap: 2,
-  },
-  historyTime: {
-    color: colors.textMuted,
-    fontSize: 9,
-    fontFamily: typography.fontFamilyMono,
-  },
-  historyCircuit: {
-    color: colors.goldBright,
-    fontSize: 11,
-    fontWeight: '700',
-    fontFamily: typography.fontFamilyMono,
-  },
-  historyRecovery: {
-    color: colors.emeraldBright,
-    fontSize: 10,
-    fontWeight: '800',
-    fontFamily: typography.fontFamilyMono,
-  },
-  historyGold: {
-    color: colors.cyanBright,
-    fontSize: 9.5,
-    fontFamily: typography.fontFamilyMono,
   },
 });

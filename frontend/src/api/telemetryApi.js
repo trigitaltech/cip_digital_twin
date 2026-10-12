@@ -133,3 +133,55 @@ export async function checkHealth() {
     return { status: 'offline', error: err.message };
   }
 }
+
+export async function fetchTelemetryHistory(circuitId = null, limit = 50, offset = 0) {
+  try {
+    const params = new URLSearchParams({ limit, offset });
+    if (circuitId && circuitId !== 'ALL') {
+      params.append('circuit_id', circuitId);
+    }
+    const response = await fetch(`${API_BASE_URL}/api/v2/telemetry/history?${params.toString()}`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch history (HTTP ${response.status})`);
+    }
+    return await response.json();
+  } catch (err) {
+    console.error('Error fetching telemetry history:', err);
+    throw err;
+  }
+}
+
+export async function fetchTelemetryDetail(telemetryId) {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v2/telemetry/history/${telemetryId}`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch telemetry record #${telemetryId}`);
+    }
+    return await response.json();
+  } catch (err) {
+    console.error(`Error fetching telemetry detail ${telemetryId}:`, err);
+    throw err;
+  }
+}
+
+export async function deleteTelemetryRecord(telemetryId) {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v2/telemetry/history/${telemetryId}`, {
+      method: 'DELETE',
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to delete record #${telemetryId}`);
+    }
+    return await response.json();
+  } catch (err) {
+    console.error(`Error deleting record ${telemetryId}:`, err);
+    throw err;
+  }
+}

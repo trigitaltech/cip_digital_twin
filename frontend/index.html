@@ -10,35 +10,67 @@
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
       /* Ensure full-height viewport for React Native flexbox layout */
-      html, body, #root {
+      html, body {
         height: 100%;
         width: 100%;
         margin: 0;
         padding: 0;
-        background-color: #090D16;
+        background-color: #080C16;
         color: #F1F5F9;
         font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
-        overflow: hidden;
+        overflow-x: hidden;
+        overflow-y: auto;
+      }
+      #root {
+        min-height: 100%;
+        height: 100%;
+        width: 100%;
+        display: flex;
+        flex-direction: column;
       }
       * {
         box-sizing: border-box;
       }
-      /* Custom scrollbar for desktop browsing */
+
+      /* Universally visible, prominent Gold Mine SCADA scrollbars */
+      * {
+        scrollbar-width: thin;
+        scrollbar-color: #F59E0B #080E1B;
+      }
+
+      /* Webkit Browsers (Chrome, Edge, Safari, Opera, Brave) */
       ::-webkit-scrollbar {
-        width: 6px;
-        height: 6px;
+        width: 10px;
+        height: 10px;
       }
       ::-webkit-scrollbar-track {
-        background: #0D1322;
+        background: #080E1B;
+        border-left: 1px solid #1E293B;
+      }
+      ::-webkit-scrollbar-track:horizontal {
+        border-left: none;
+        border-top: 1px solid #1E293B;
       }
       ::-webkit-scrollbar-thumb {
-        background: #1E293B;
-        border-radius: 3px;
+        background: #253552;
+        border-radius: 5px;
+        border: 2px solid #080E1B;
+        transition: background 0.15s ease-in-out, border-color 0.15s ease-in-out;
       }
       ::-webkit-scrollbar-thumb:hover {
-        background: #334155;
+        background: #F59E0B;
+        border-color: #78350F;
+        box-shadow: 0 0 10px rgba(245, 158, 11, 0.5);
+      }
+      ::-webkit-scrollbar-thumb:active {
+        background: #FBBF24;
+        border-color: #B45309;
+        box-shadow: 0 0 14px rgba(251, 191, 36, 0.8);
+      }
+      ::-webkit-scrollbar-corner {
+        background: #080E1B;
       }
     </style>
   </head>

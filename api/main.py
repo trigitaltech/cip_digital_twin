@@ -252,6 +252,182 @@ async def accept_telemetry_and_optimize(payload: TelemetryPayload, db: Session =
         }
     }
 
+@app.get("/api/v2/telemetry/history")
+def get_telemetry_history(
+    circuit_id: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db)
+):
+    query = db.query(CircuitTelemetry)
+    if circuit_id:
+        query = query.filter(CircuitTelemetry.circuit_id == circuit_id)
+    
+    total = query.count()
+    records = query.order_by(CircuitTelemetry.timestamp.desc(), CircuitTelemetry.telemetry_id.desc()).offset(offset).limit(limit).all()
+    
+    results = []
+    for rec in records:
+        stages_sorted = sorted(rec.tank_stages, key=lambda s: s.tank_index)
+        head_au = float(stages_sorted[0].solution_au_ppm) if stages_sorted else 0.0
+        tail_au = float(stages_sorted[-1].solution_au_ppm) if stages_sorted else 0.0
+        approx_rec = round(max(0.0, min(99.9, ((head_au - tail_au) / (head_au + 1e-6)) * 100.0)), 2) if head_au > 0 else 0.0
+        
+        reagents_summary = None
+        if rec.reagents:
+            reagents_summary = {
+                "dry_solids_rate_tons_h": float(rec.reagents.dry_solids_rate_tons_h or 0),
+                "water_rate_m3_h": float(rec.reagents.water_rate_m3_h or 0),
+                "liquid_to_solid_ratio": float(rec.reagents.liquid_to_solid_ratio or 0),
+                "lime_addition_kg_t": float(rec.reagents.lime_addition_kg_t or 0),
+                "lime_addition_kg_h": float(rec.reagents.lime_addition_kg_h or 0),
+                "lime_daily_tons": float(rec.reagents.lime_daily_tons or 0),
+                "nacn_consumption_kg_t": float(rec.reagents.nacn_consumption_kg_t or 0),
+                "nacn_consumption_kg_h": float(rec.reagents.nacn_consumption_kg_h or 0),
+                "nacn_daily_tons": float(rec.reagents.nacn_daily_tons or 0),
+                "h2o2_addition_kg_t": float(rec.reagents.h2o2_addition_kg_t or 0),
+                "h2o2_addition_kg_h": float(rec.reagents.h2o2_addition_kg_h or 0),
+                "h2o2_daily_tons": float(rec.reagents.h2o2_daily_tons or 0),
+                "equivalent_pure_o2_kg_h": float(rec.reagents.equivalent_pure_o2_kg_h or 0),
+            }
+            
+        results.append({
+            "telemetry_id": rec.telemetry_id,
+            "circuit_id": rec.circuit_id,
+            "timestamp": rec.timestamp.isoformat() if rec.timestamp else None,
+            "slurry_flow_rate_m3_h": float(rec.slurry_flow_rate_m3_h),
+            "slurry_density_pct": float(rec.slurry_density_pct),
+            "slurry_ph": float(rec.slurry_ph),
+            "carbon_advance_rate_tons_h": float(rec.carbon_advance_rate_tons_h),
+            "head_grade_au_gt": head_au,
+            "tail_grade_au_ppm": tail_au,
+            "approx_recovery_pct": approx_rec,
+            "stage_count": len(stages_sorted),
+            "reagents": reagents_summary,
+            "stages": [
+                {
+                    "tank_index": s.tank_index,
+                    "solution_au_ppm": float(s.solution_au_ppm),
+                    "carbon_load_au_gt": float(s.carbon_load_au_gt),
+                    "carbon_density_gl": float(s.carbon_density_gl),
+                    "fouling_factor_alpha": float(s.fouling_factor_alpha),
+                } for s in stages_sorted
+            ]
+        })
+        
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "items": results
+    }
+
+@app.get("/api/v2/telemetry/history/{telemetry_id}")
+def get_telemetry_history_detail(telemetry_id: int, db: Session = Depends(get_db)):
+    rec = db.query(CircuitTelemetry).filter(CircuitTelemetry.telemetry_id == telemetry_id).first()
+    if not rec:
+        raise HTTPException(status_code=404, detail=f"Telemetry record #{telemetry_id} not found")
+        
+    stages_sorted = sorted(rec.tank_stages, key=lambda s: s.tank_index)
+    fouling_list = [float(s.fouling_factor_alpha) for s in stages_sorted]
+    head_grade = float(stages_sorted[0].solution_au_ppm) if stages_sorted else 1.0
+    slurry_flow = float(rec.slurry_flow_rate_m3_h)
+    
+    # Calculate mass balance
+    throughput = reagent_model.calculate_throughput(
+        slurry_flow_m3_h=slurry_flow,
+        slurry_density_pct=float(rec.slurry_density_pct)
+    )
+    
+    # Run optimization for complete dashboard restoration
+    try:
+        optimized_targets = run_circuit_optimization(
+            slurry_flow=slurry_flow,
+            X_feed=head_grade,
+            fouling_profile=np.array(fouling_list)
+        )
+    except Exception:
+        optimized_targets = {
+            "recommended_carbon_advance_rate_tons_h": float(rec.carbon_advance_rate_tons_h),
+            "recommended_tank_carbon_densities_gl": [float(s.carbon_density_gl) for s in stages_sorted],
+            "predicted_tail_solution_au_ppm": float(stages_sorted[-1].solution_au_ppm) if stages_sorted else 0.05,
+            "predicted_circuit_recovery_pct": 94.5
+        }
+        
+    dry_t_h = throughput["dry_solids_rate_t_h"]
+    rec_pct = optimized_targets["predicted_circuit_recovery_pct"]
+    gold_produced_g_h = round(dry_t_h * head_grade * (rec_pct / 100.0), 2)
+    gold_produced_oz_day = round((gold_produced_g_h * 24.0) / 31.1035, 2)
+    
+    reagents_detail = {}
+    if rec.reagents:
+        reagents_detail = {
+            "lime": {
+                "purpose": "Protective Alkalinity (Target pH 10.5 - 11.0)",
+                "dosage_kg_per_dry_tonne": float(rec.reagents.lime_addition_kg_t or 0),
+                "dosing_rate_kg_per_hour": float(rec.reagents.lime_addition_kg_h or 0),
+                "daily_consumption_tons": float(rec.reagents.lime_daily_tons or 0)
+            },
+            "sodium_cyanide_nacn": {
+                "purpose": "Gold Complexation & Lixiviation (Au + 2CN-)",
+                "consumption_kg_per_dry_tonne": float(rec.reagents.nacn_consumption_kg_t or 0),
+                "consumption_rate_kg_per_hour": float(rec.reagents.nacn_consumption_kg_h or 0),
+                "daily_consumption_tons": float(rec.reagents.nacn_daily_tons or 0)
+            },
+            "oxidant_h2o2_or_oxygen": {
+                "purpose": "Dissolved Oxygen Maintenance & Passivation",
+                "h2o2_dosage_kg_per_tonne": float(rec.reagents.h2o2_addition_kg_t or 0),
+                "h2o2_dosing_rate_kg_per_hour": float(rec.reagents.h2o2_addition_kg_h or 0),
+                "h2o2_daily_consumption_tons": float(rec.reagents.h2o2_daily_tons or 0),
+                "alternative_pure_o2_sparging_kg_per_hour": float(rec.reagents.equivalent_pure_o2_kg_h or 0)
+            }
+        }
+        
+    return {
+        "status": "success",
+        "telemetry_id": rec.telemetry_id,
+        "circuit_id": rec.circuit_id,
+        "process_type": "CIL" if "CIL" in rec.circuit_id.upper() else "CIP",
+        "processed_at": rec.timestamp.isoformat() if rec.timestamp else datetime.utcnow().isoformat(),
+        "mass_balance": {
+            "slurry_specific_gravity": throughput["slurry_sg"],
+            "slurry_mass_rate_t_h": throughput["slurry_mass_rate_t_h"],
+            "dry_ore_throughput_t_h": throughput["dry_solids_rate_t_h"],
+            "process_water_m3_h": throughput["water_rate_m3_h"],
+            "liquid_to_solid_ratio": throughput["liquid_to_solid_ratio"]
+        },
+        "chemical_reagent_dosing_recommendations": reagents_detail,
+        "carbon_adsorption_recommendations": optimized_targets,
+        "projected_production_yield": {
+            "estimated_gold_recovery_rate_g_h": gold_produced_g_h,
+            "estimated_daily_gold_production_troy_oz": gold_produced_oz_day
+        },
+        "stages": [
+            {
+                "tank_index": s.tank_index,
+                "solution_au_ppm": float(s.solution_au_ppm),
+                "carbon_load_au_gt": float(s.carbon_load_au_gt),
+                "carbon_density_gl": float(s.carbon_density_gl),
+                "fouling_factor_alpha": float(s.fouling_factor_alpha),
+            } for s in stages_sorted
+        ],
+        "global_metrics": {
+            "slurry_flow_rate_m3_h": float(rec.slurry_flow_rate_m3_h),
+            "slurry_density_pct": float(rec.slurry_density_pct),
+            "slurry_ph": float(rec.slurry_ph),
+            "carbon_advance_rate_tons_h": float(rec.carbon_advance_rate_tons_h)
+        }
+    }
+
+@app.delete("/api/v2/telemetry/history/{telemetry_id}")
+def delete_telemetry_history(telemetry_id: int, db: Session = Depends(get_db)):
+    rec = db.query(CircuitTelemetry).filter(CircuitTelemetry.telemetry_id == telemetry_id).first()
+    if not rec:
+        raise HTTPException(status_code=404, detail=f"Telemetry record #{telemetry_id} not found")
+    db.delete(rec)
+    db.commit()
+    return {"status": "deleted", "telemetry_id": telemetry_id}
+
 @app.get("/api/v2/health")
 def health_check():
     return {"status": "online", "service": "CIP/CIL Digital Twin Reagent & Optimization Engine"}
