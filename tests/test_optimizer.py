@@ -44,5 +44,5 @@ def test_circuit_optimization_settles():
     if not res.success:
         res = minimize(objective, initial_guess, method='L-BFGS-B', bounds=bounds)
     
-    assert res.success is True
+    assert bool(res.success)
     assert res.x[0] >= 0.5

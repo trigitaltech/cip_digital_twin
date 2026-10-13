@@ -1,0 +1,162 @@
+name: Build and Deploy to EC2
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  build-and-test:
+    name: Build & Test (CI)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+
+      - name: Run unit tests
+        env:
+          PYTHONPATH: .
+        run: |
+          pytest -v tests/
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Backend Docker image (Validation)
+        run: |
+          docker build -t cip_api:test .
+
+      - name: Build Frontend Docker image (Validation)
+        run: |
+          docker build -t cip_frontend:test ./frontend
+
+  deploy:
+    name: Deploy to EC2 & Clean Old Images (CD)
+    runs-on: ubuntu-latest
+    needs: build-and-test
+
+    steps:
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          APP_DIR: ${{ secrets.APP_DIR || '/home/ubuntu/cip_digital_twin' }}
+          ENV_FILE: ${{ secrets.ENV_FILE || '' }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: ${{ secrets.EC2_PORT || 22 }}is that frontend updated in dockercompose and deplo
+          envs: APP_DIR,ENV_FILE
+          script_stop: true
+          script: |
+            set -e
+
+            echo "=========================================="
+            echo "Starting Deployment on EC2"
+            echo "Target Directory: ${APP_DIR}"
+            echo "Timestamp: $(date -u)"
+            echo "=========================================="
+
+            # 1. Verify and navigate to target directory
+            if [ ! -d "${APP_DIR}" ]; then
+              echo ">>> Target directory ${APP_DIR} not found. Please ensure the repository is cloned on EC2."
+              exit 1
+            fi
+
+            cd "${APP_DIR}"
+
+            # 2. Pull latest code from GitHub
+            echo ">>> Fetching and resetting to latest origin/main..."
+            git fetch origin main
+            git reset --hard origin/main
+
+            # 3. Configure environment variables (.env)
+            if [ -n "${ENV_FILE}" ]; then
+              echo ">>> Updating .env from GitHub Secrets..."
+              echo "${ENV_FILE}" > .env
+            elif [ ! -f .env ] && [ -f .env.example ]; then
+              echo ">>> Initializing .env from .env.example..."
+              cp .env.example .env
+            fi
+
+            # 4. Build and deploy containers using Docker Compose
+            echo ">>> Building and starting containers with Docker Compose..."
+            docker compose up -d --build --remove-orphans
+
+            # 5. Service health check verification
+            echo ">>> Verifying backend API health..."
+            API_HEALTHY=false
+            for i in $(seq 1 15); do
+              if curl -sf http://localhost:8000/api/v2/health > /dev/null 2>&1; then
+                echo ">>> Backend API Health Check PASSED on attempt $i!"
+                API_HEALTHY=true
+                break
+              fi
+              echo ">>> Waiting for Backend API to respond (attempt $i/15)..."
+              sleep 4
+            done
+
+            if [ "$API_HEALTHY" = false ]; then
+              echo ">>> ERROR: Backend API Health check failed!"
+              docker compose logs --tail=50 api postgres
+              exit 1
+            fi
+
+            echo ">>> Verifying frontend web server health..."
+            FRONTEND_PORT_VAL="80"
+            if [ -f .env ]; then
+              VAL=$(grep -E '^FRONTEND_PORT=' .env | cut -d '=' -f2 | tr -d ' "\r' || true)
+              if [ -n "$VAL" ]; then
+                FRONTEND_PORT_VAL="$VAL"
+              fi
+            fi
+
+            FRONTEND_HEALTHY=false
+            for i in $(seq 1 10); do
+              if curl -sf "http://localhost:${FRONTEND_PORT_VAL}/" > /dev/null 2>&1; then
+                echo ">>> Frontend Health Check PASSED on port ${FRONTEND_PORT_VAL}!"
+                FRONTEND_HEALTHY=true
+                break
+              fi
+              echo ">>> Waiting for Frontend web server to respond (attempt $i/10)..."
+              sleep 3
+            done
+
+            if [ "$FRONTEND_HEALTHY" = false ]; then
+              echo ">>> ERROR: Frontend Health check failed!"
+              docker compose logs --tail=50 frontend
+              exit 1
+            fi
+
+
+            # 6. Cleanup unused old Docker images upon successful deploy
+            echo ">>> Deployment successful! Pruning unused old Docker images..."
+            docker image prune -af
+
+            # Prune dangling builder cache older than 24h
+            docker builder prune -f --filter "until=24h" || true
+
+            echo "=========================================="
+            echo "Deployment Completed Successfully!"
+            echo "Active Containers:"
+            docker compose ps
+            echo "Docker Disk Usage:"
+            docker system df
+            echo "=========================================="

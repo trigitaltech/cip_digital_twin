@@ -88,7 +88,7 @@ export const PRESETS = [
   },
 ];
 
-export const API_BASE_URL = window.location.port === '5173' ? '' : 'http://127.0.0.1:8000';
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
 export async function submitTelemetry(payload) {
   const endpoint = `${API_BASE_URL}/api/v2/telemetry`;
