@@ -62,7 +62,7 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          port: ${{ secrets.EC2_PORT || 22 }}is that frontend updated in dockercompose and deplo
+          port: ${{ secrets.EC2_PORT || 22 }}
           envs: APP_DIR,ENV_FILE
           script_stop: true
           script: |
