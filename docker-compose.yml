@@ -38,7 +38,7 @@ services:
     container_name: cip_frontend
     restart: unless-stopped
     ports:
-      - "${FRONTEND_PORT:-80}:80"
+      - "${FRONTEND_PORT:-3000}:80"
     depends_on:
       - api
 

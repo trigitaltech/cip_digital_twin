@@ -102,6 +102,11 @@ jobs:
               cp .env.example .env
             fi
 
+            # Prevent conflict if port 80 is used by Caddy on EC2
+            if [ -f .env ]; then
+              sed -i 's/^FRONTEND_PORT=80/FRONTEND_PORT=3000/' .env
+            fi
+
             # 4. Build and deploy containers using Docker Compose
             echo ">>> Building and starting containers with Docker Compose..."
             docker compose up -d --build --remove-orphans
@@ -126,13 +131,14 @@ jobs:
             fi
 
             echo ">>> Verifying frontend web server health..."
-            FRONTEND_PORT_VAL="80"
+            FRONTEND_PORT_VAL="3000"
             if [ -f .env ]; then
               VAL=$(grep -E '^FRONTEND_PORT=' .env | cut -d '=' -f2 | tr -d ' "\r' || true)
               if [ -n "$VAL" ]; then
                 FRONTEND_PORT_VAL="$VAL"
               fi
             fi
+
 
             FRONTEND_HEALTHY=false
             for i in $(seq 1 10); do
