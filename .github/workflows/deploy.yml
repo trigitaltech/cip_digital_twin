@@ -74,18 +74,24 @@ jobs:
             echo "Timestamp: $(date -u)"
             echo "=========================================="
 
-            # 1. Verify and navigate to target directory
-            if [ ! -d "${APP_DIR}" ]; then
-              echo ">>> Target directory ${APP_DIR} not found. Please ensure the repository is cloned on EC2."
-              exit 1
+            # 1. Verify target directory; automatically clone repository if missing
+            if [ ! -d "${APP_DIR}" ] || [ ! -d "${APP_DIR}/.git" ]; then
+              echo ">>> Target directory not found or not a git repository. Initializing and cloning..."
+              mkdir -p "${APP_DIR}"
+              cd "${APP_DIR}"
+              if [ ! -d ".git" ]; then
+                git clone https://github.com/${{ github.repository }}.git .
+              fi
+            else
+              cd "${APP_DIR}"
             fi
 
-            cd "${APP_DIR}"
-
-            # 2. Pull latest code from GitHub
+            # 2. Ensure remote uses HTTPS and fetch latest changes
+            git remote set-url origin https://github.com/${{ github.repository }}.git 2>/dev/null || true
             echo ">>> Fetching and resetting to latest origin/main..."
             git fetch origin main
             git reset --hard origin/main
+
 
             # 3. Configure environment variables (.env)
             if [ -n "${ENV_FILE}" ]; then
